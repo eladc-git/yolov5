@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import pickle
 from tensorflow.keras import layers, Model, initializers, Sequential, activations
-from tensorflow.keras import backend as K
+
 
 def autopad(k, pad=None):  # kernel, padding
     # Pad to 'same'
@@ -93,6 +93,7 @@ def OutputLayer(x):
     x3 = layers.Reshape((-1, 3, 85))(x3)
     x3 = tf.transpose(x3, [0, 2, 1, 3])
 
+    #y = layers.Concatenate(axis=2)([x1, x2, x3])
     return [x1,x2,x3]
 
 
@@ -111,11 +112,11 @@ class Yolov5n:
         x2 = C3Block(x2, c_in=256, c_out=256, n=1, act="swish")
         x2 = SPPFBlock(x2, c_in=256, c_out=256)
         x2 = ConvBlock(x2, c_in=256, c_out=128, k=1, s=1, act="swish")
-        x3 = Upsample(x2, scale_factor=2, mode="bilinear")
+        x3 = Upsample(x2, scale_factor=2, mode="nearest")
         x3 = Concat([x3, x1])
         x3 = C3Block(x3, c_in=256, c_out=128, n=1, shortcut=False, act="swish")
         x3 = ConvBlock(x3, c_in=128, c_out=64, k=1, s=1, pad=1, act="swish")
-        x4 = Upsample(x3, scale_factor=2, mode="bilinear")
+        x4 = Upsample(x3, scale_factor=2, mode="nearest")
         x4 = Concat([x4, x])
         y1 = C3Block(x4, c_in=128, c_out=64, n=1, shortcut=False, act="swish")
         x4 = ConvBlock(y1, c_in=64, c_out=64, k=3, s=2, pad=1, act="swish")
@@ -135,8 +136,8 @@ class Yolov5n:
     def get_input_shape(self):
         return self.input_shape
 
-    def find_in_dictionary(self, dictionary, name):
-        for key in dictionary.keys():
+    def find_in_dictionary(self, dict, name):
+        for key in dict.keys():
             if key.find(name) != -1:
                 return key
         return None
@@ -149,7 +150,7 @@ class Yolov5n:
     def load_weights(self, weights_pickle_path):
         file = open(weights_pickle_path, "rb")
         weights_dict = pickle.load(file)
-        assert isinstance(weights_dict, dict), "Weights should be dictionary!"
+        assert isinstance(weights_dict, dict), "Weights should be dictionay!"
         counter = 0
         try:
             for layer in self.model.layers:
@@ -162,7 +163,7 @@ class Yolov5n:
                 layer.set_weights(new_weights)
         except:
             assert False, "No matching in weights shapes!"
-        assert len(weights_dict) == counter, "Number of weights should be equal!"
+        assert len(weights_dict) == counter, "Numer of weights should be equal!"
 
     def save_weights(self):
         import pickle
@@ -171,14 +172,9 @@ class Yolov5n:
         weights_dict = {}
         for name, weight in zip(names, weights):
             weights_dict[name] = weight
-        file = open("weights.pkl", "wb")
+        file = open("yolov5n_weights.pkl", "wb")
         pickle.dump(weights_dict, file)
         file.close()
-
-    def get_layers_output(self, input_tensor):
-        intermediate_model = Model(inputs=self.model.layers[0].input, outputs=[l.output for l in self.model.layers[1:]])
-        y = intermediate_model.predict(input_tensor)
-        return y
 
 
 def create_yolov5n(image_size, batch_size=1, weights_pickle_path=None):
@@ -193,7 +189,5 @@ if __name__ == "__main__":
     yolov5n = create_yolov5n(image_size, weights_pickle_path=r"E:\Models\yolov5\yolov5n_weights.pkl")
     input = tf.random.uniform((1, *image_size))
     y = yolov5n.model(input)
-    x = yolov5n.get_layers_output(input)
-
-    #yolov5n.model.save("yolov5n.h5", save_format='h5')
+    yolov5n.model.save("yolov5n.h5", save_format='h5')
     print("Model is saved!")
