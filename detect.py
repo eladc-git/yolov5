@@ -45,7 +45,7 @@ from utils.general import (LOGGER, check_file, check_img_size, check_imshow, che
                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
-
+import numpy as np
 
 @torch.no_grad()
 def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
@@ -124,12 +124,15 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
         # Inference
         visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-        pred = model(im, augment=augment, visualize=visualize)
+        if model.h5:
+            pred = model(im)
+        else:
+            pred = model(im, augment=augment, visualize=visualize)
         t3 = time_sync()
         dt[1] += t3 - t2
 
         # NMS
-        pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+        pred = non_max_suppression(pred, conf_thres/4, iou_thres, classes, agnostic_nms, max_det=max_det)
         dt[2] += time_sync() - t3
 
         # Second-stage classifier (optional)

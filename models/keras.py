@@ -69,7 +69,6 @@ class TFConv(layers.Layer):
         self.c1, self.c2, self.k, self.s = c1, c2, k, s
         assert isinstance(k, int), "Convolution with multiple kernels are not allowed."
         assert g == 1, "TF v2.2 Conv2D does not support 'groups' argument"
-        #self.conv = layers.Conv2D(filters=c2, kernel_size=k, strides=s, padding="SAME")
         self.conv = keras.layers.Conv2D(
             c2, k, s, 'SAME' if s == 1 else 'VALID', use_bias=False if hasattr(w, 'bn') else True,
             kernel_initializer=keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
@@ -136,19 +135,6 @@ class TFBottleneck(layers.Layer):
             "Conv1": self.cv1, "Conv2": self.cv2, "AddInput": self.add,
         })
         return config
-
-class TFConv2d(layers.Layer):
-    # Substitution for PyTorch nn.Conv2D
-    def __init__(self, c1, c2, k, s=1, g=1, bias=True, w=None):
-        super().__init__()
-        assert g == 1, "TF v2.2 Conv2D does not support 'groups' argument"
-        self.conv = keras.layers.Conv2D(
-            c2, k, s, 'VALID', use_bias=bias,
-            kernel_initializer=keras.initializers.Constant(w.weight.permute(2, 3, 1, 0).numpy()),
-            bias_initializer=keras.initializers.Constant(w.bias.numpy()) if bias else None, )
-
-    def call(self, inputs):
-        return self.conv(inputs)
 
 class TFC3(layers.Layer):
     # CSP Bottleneck with 3 convolutions
