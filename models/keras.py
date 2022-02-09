@@ -150,25 +150,6 @@ class TFConv2d(layers.Layer):
     def call(self, inputs):
         return self.conv(inputs)
 
-class TFBottleneckCSP(layers.Layer):
-    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
-        # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
-        self.cv2 = TFConv2d(c1, c_, 1, 1, bias=False, w=w.cv2)
-        self.cv3 = TFConv2d(c_, c_, 1, 1, bias=False, w=w.cv3)
-        self.cv4 = TFConv(2 * c_, c2, 1, 1, w=w.cv4)
-        self.bn = TFBN(w.bn)
-        self.act = lambda x: keras.activations.relu(x, alpha=0.1)
-        self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
-
-    def call(self, inputs):
-        y1 = self.cv3(self.m(self.cv1(inputs)))
-        y2 = self.cv2(inputs)
-        return self.cv4(self.act(self.bn(tf.concat((y1, y2), axis=3))))
-
 class TFC3(layers.Layer):
     # CSP Bottleneck with 3 convolutions
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
@@ -177,8 +158,8 @@ class TFC3(layers.Layer):
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
         self.cv2 = TFConv(c1, c_, 1, 1, w=w.cv2)
-        self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3)
         self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
+        self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3)
 
     def call(self, inputs):
         return self.cv3(tf.concat((self.m(self.cv1(inputs)), self.cv2(inputs)), axis=3))
