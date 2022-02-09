@@ -248,7 +248,7 @@ class TFUpsample(keras.layers.Layer):
     def __init__(self, size, scale_factor, mode, w=None):  # warning: all arguments needed including 'w'
         super().__init__()
         assert scale_factor == 2, "scale_factor must be 2"
-        self.upsample = lambda x: tf.image.resize(x, (x.shape[1] * 2, x.shape[2] * 2), method=mode)
+        self.upsample = lambda x: tf.image.resize(x, (x.shape[1] * 2, x.shape[2] * 2), method='bilinear')
         # self.upsample = keras.layers.UpSampling2D(size=scale_factor, interpolation=mode)
         # with default arguments: align_corners=False, half_pixel_centers=False
         # self.upsample = lambda x: tf.raw_ops.ResizeNearestNeighbor(images=x,

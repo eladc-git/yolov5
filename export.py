@@ -57,6 +57,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
+import warnings
+warnings.filterwarnings("ignore")
+
 from models.common import Conv
 from models.experimental import attempt_load
 from models.yolo import Detect
@@ -222,6 +225,19 @@ def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=F
     except Exception as e:
         LOGGER.info(f'\n{prefix} export failure: {e}')
 
+
+def save_weights(model, weights_path):
+    import pickle
+    names = [weight.name for layer in model.layers for weight in layer.weights]
+    weights = model.get_weights()
+    weights_dict = {}
+    for name, weight in zip(names, weights):
+        weights_dict[name] = weight
+    file = open(weights_path, "wb")
+    pickle.dump(weights_dict, file)
+    file.close()
+
+
 def export_keras(model, im, file, dynamic, prefix=colorstr('Keras:')):
     # YOLOv5 TensorFlow SavedModel export
     try:
@@ -242,10 +258,12 @@ def export_keras(model, im, file, dynamic, prefix=colorstr('Keras:')):
         keras_model = keras.Model(inputs=inputs, outputs=outputs, name="yolov5")
         keras_model.trainable = False
         keras_model.summary()
-        keras_model.save(f, save_format='h5')
-
-        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+        #keras_model.save(f, save_format='h5')
+        out_weights = '/data/projects/swat/users/eladco/test/weights.pkl'
+        save_weights(keras_model, weights_path=out_weights)
+        LOGGER.info(f'{prefix} export success, saved as weights: {out_weights}')
         return keras_model, f
+
     except Exception as e:
         LOGGER.info(f'\n{prefix} export failure: {e}')
         return None, None

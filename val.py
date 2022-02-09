@@ -44,7 +44,9 @@ from utils.general import (LOGGER, box_iou, check_dataset, check_img_size, check
 from utils.metrics import ConfusionMatrix, ap_per_class
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, time_sync
-
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+import warnings
+warnings.filterwarnings("ignore")
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -128,6 +130,7 @@ def run(data,
 
         half &= device.type != 'cpu'  # half precision only supported on CUDA
         model.half() if half else model.float()
+        model.h5 = False
     else:  # called directly
         device = select_device(device, batch_size=batch_size)
 

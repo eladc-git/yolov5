@@ -63,7 +63,7 @@ class TFPad(keras.layers.Layer):
 
 class TFConv(layers.Layer):
     # Standard convolution
-    def __init__(self, c1, c2, k=6, s=1, p=None, g=1, act=True, w=None):
+    def __init__(self, c1, c2, k=6, s=1, p=None, g=1, act=True, bbb='silu', w=None):
         # ch_in, ch_out, weights, kernel, stride, padding, groups
         super().__init__()
         self.c1, self.c2, self.k, self.s = c1, c2, k, s

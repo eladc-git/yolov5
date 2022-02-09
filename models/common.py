@@ -34,14 +34,14 @@ def autopad(k, p=None):  # kernel, padding
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
 
-
 class Conv(nn.Module):
     # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True, act_fn='silu'):  # ch_in, ch_out, kernel, stride, padding, groups
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
+        act_fn = nn.SiLU() if act_fn=='silu' else nn.ReLU()
+        self.act = act_fn if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
@@ -98,7 +98,7 @@ class Bottleneck(nn.Module):
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c_, c2, 3, 1, g=g)
+        self.cv2 = Conv(c_, c2, 3, 1)
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
@@ -276,6 +276,7 @@ class Concat(nn.Module):
 
 anchors = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
 strides = [8,16,32]
+
 def box_decoding(outputs, anchors, strides, nc=80, imgsz=(640, 640)):
     import tensorflow as tf
     no = nc + 5  # number of outputs per anchor
@@ -285,10 +286,11 @@ def box_decoding(outputs, anchors, strides, nc=80, imgsz=(640, 640)):
     anchor_grid = tf.cast(anchor_grid, tf.float32)
     z = []
     for i in range(nl):
-        y = outputs[i]
         ny, nx = imgsz[0] // strides[i], imgsz[1] // strides[i]
         xv, yv = tf.meshgrid(tf.range(nx), tf.range(ny))
         grid = tf.cast(tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny * nx, 2]), dtype=tf.float32)
+        y = outputs[i]
+        y = tf.transpose(y, [0, 2, 1, 3])
         xy = (y[..., 0:2] * 2 - 0.5 + grid) * strides[i]  # xy
         wh = (y[..., 2:4] * 2) ** 2 * anchor_grid[i]
         # Normalize xywh to 0-1 to reduce calibration error
@@ -380,7 +382,7 @@ class DetectMultiBackend(nn.Module):
             LOGGER.info(f'Loading {w} for CoreML inference...')
             import coremltools as ct
             model = ct.models.MLModel(w)
-        else:  # TensorFlow (SavedModel, GraphDef, Lite, Edge TPU)
+        else:  # TensorFlow (SavedModel, GraphDef, Lite, Edge TPU, Keras)
             if saved_model:  # SavedModel
                 LOGGER.info(f'Loading {w} for TensorFlow SavedModel inference...')
                 import tensorflow as tf
