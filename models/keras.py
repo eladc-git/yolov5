@@ -37,7 +37,7 @@ from utils.general import LOGGER, make_divisible, print_args
 class TFBN(keras.layers.Layer):
     # TensorFlow BatchNormalization wrapper
     def __init__(self, w=None):
-        super(TFBN, self).__init__()
+        super().__init__()
         self.bn = keras.layers.BatchNormalization(
             beta_initializer=keras.initializers.Constant(w.bias.numpy()),
             gamma_initializer=keras.initializers.Constant(w.weight.numpy()),
@@ -88,7 +88,9 @@ class TFConv(layers.Layer):
             self.act = (lambda x: keras.activations.swish(x)) if act else tf.identity
             self.act_fun = "swish"
         else:
-            raise Exception(f'no matching TensorFlow activation found for {w.act}')
+            self.act = (lambda x: keras.activations.sigmoid(x)) if act else tf.identity
+            self.act_fun = "sigmoid"
+
 
     def call(self, inputs):
         return self.act(self.bn(self.conv(inputs)))
@@ -300,6 +302,48 @@ class TFConcat(layers.Layer):
         })
         return config
 
+class TFConcatOut(layers.Layer):
+    def __init__(self, args, dimension=1, w=None):
+        super().__init__()
+
+        self.dimension = dimension
+        self.d = 3
+        self.conv = []
+        for arg in args:
+            w.conv = arg
+            w.act = nn.Sigmoid
+            self.conv.append(TFConv(w.conv.in_channels, w.conv.out_channels, w.conv.kernel_size[0], w.conv.stride[0], act=True, w=w))
+        self.reshape = tf.keras.layers.Reshape((-1, 85))
+        self.concat = tf.keras.layers.Concatenate(axis=dimension)
+
+    def call(self, inputs):
+        y = []
+        for i, x in enumerate(inputs):
+            y.append(self.reshape(self.conv[i](x)))
+        return self.concat(y)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_inputs": self.d, "dimension": self.dimension,
+        })
+        return config
+
+class ConcatOut(nn.Module):
+    # Concatenate a list of tensors along dimension
+    def __init__(self, args, dimension=0):
+        super().__init__()
+        self.dimension = dimension
+        self.conv = []
+        for w in args:
+            self.conv.append(Conv(w.in_channels, w.out_channels, w.kernel_size[0], w.stride[0], act=nn.Sigmoid()))
+
+    def forward(self, inputs):
+        y = []
+        for i, x in enumerate(inputs):
+            y.append(torch.reshape(self.conv[i](x), (-1, 85)))
+        return torch.cat(y, self.dimension)
+
 def parse_model(d, ch, model, imgsz):  # model_dict, input_channels(3)
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
@@ -330,11 +374,14 @@ def parse_model(d, ch, model, imgsz):  # model_dict, input_channels(3)
         elif m is Concat:
             c2 = sum(ch[-1 if x == -1 else x + 1] for x in f)
         elif m is Detect:
-            break
-            args.append([ch[x + 1] for x in f])
-            if isinstance(args[1], int):  # number of anchors
-                args[1] = [list(range(args[1] * 2))] * len(f)
-            args.append(imgsz)
+            # args.append([ch[x + 1] for x in f])
+            # if isinstance(args[1], int):  # number of anchors
+            #     args[1] = [list(range(args[1] * 2))] * len(f)
+            # args.append(imgsz)
+            # repalce Detect block with ConcatOut block
+            m_str = "ConcatOut"
+            m = ConcatOut
+            args = [[a for a in model.model[i].m]]
         else:
             c2 = ch[f]
 

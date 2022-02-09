@@ -239,7 +239,7 @@ def export_keras(model, im, file, dynamic, prefix=colorstr('Keras:')):
         _ = model.predict(im) # first call to create weights
         inputs = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
         outputs = model.predict(inputs)
-        keras_model = keras.Model(inputs=inputs, outputs=outputs, name="yolov5")
+        keras_model = keras.Model(inputs=inputs, outputs=outputs, name="yolov5n")
         keras_model.trainable = False
         keras_model.summary()
         keras_model.save(f, save_format='h5')
