@@ -42,15 +42,15 @@ def C3Block(x, c_in, c_out, n=1, shortcut=True, act=None, e=0.5):
     return y
 
 
-def SPPFBlock(x, c_in, c_out, k=5):
+def SPPFBlock(x, c_in, c_out, k=5, act=None):
     # Spatial pyramid pooling-Fast layer
     c_hidden = c_in // 2  # hidden channels
-    x = ConvBlock(x, c_in, c_hidden, 1, 1, act="swish")
+    x = ConvBlock(x, c_in, c_hidden, 1, 1, act=act)
     y = layers.MaxPool2D(pool_size=k, strides=1, padding='SAME')(x)
     z = layers.MaxPool2D(pool_size=k, strides=1, padding='SAME')(y)
     w = layers.MaxPool2D(pool_size=k, strides=1, padding='SAME')(z)
     x = layers.Concatenate(axis=3)([x, y, z, w])
-    x = ConvBlock(x, c_hidden * 4, c_out, 1, 1, act="swish")
+    x = ConvBlock(x, c_hidden * 4, c_out, 1, 1, act=act)
     return x
 
 
@@ -93,7 +93,7 @@ class Yolov5n:
         x1 = C3Block(x1, c_in=128, c_out=128, n=3, act="swish")
         x2 = ConvBlock(x1, c_in=128, c_out=256, k=3, s=2, pad=1, act="swish")
         x2 = C3Block(x2, c_in=256, c_out=256, n=1, act="swish")
-        x2 = SPPFBlock(x2, c_in=256, c_out=256)
+        x2 = SPPFBlock(x2, c_in=256, c_out=256, act="swish")
         x2 = ConvBlock(x2, c_in=256, c_out=128, k=1, s=1, act="swish")
         x3 = Upsample(x2, scale_factor=2, mode="bilinear")
         x3 = Concat([x3, x1])
@@ -177,5 +177,6 @@ if __name__ == "__main__":
     yolov5n = create_yolov5n(image_size, weights_pickle_path="/data/projects/swat/users/eladco/test/weights.pkl")
     input0 = tf.random.uniform((1, *image_size))
     y = yolov5n.model(input0)
-    yolov5n.model.save("/data/projects/swat/users/eladco/test/yolov5n.h5", save_format='h5')
-    print("Model is saved!")
+    out_model_path = "/data/projects/swat/users/eladco/test/yolov5n.h5"
+    yolov5n.model.save(out_model_path, save_format='h5')
+    print("Model is saved on {}".format(out_model_path))
