@@ -37,7 +37,7 @@ from utils.general import LOGGER, make_divisible, print_args
 class TFBN(keras.layers.Layer):
     # TensorFlow BatchNormalization wrapper
     def __init__(self, w=None):
-        super().__init__()
+        super(TFBN, self).__init__()
         self.bn = keras.layers.BatchNormalization(
             beta_initializer=keras.initializers.Constant(w.bias.numpy()),
             gamma_initializer=keras.initializers.Constant(w.weight.numpy()),
@@ -69,6 +69,7 @@ class TFConv(layers.Layer):
         self.c1, self.c2, self.k, self.s = c1, c2, k, s
         assert isinstance(k, int), "Convolution with multiple kernels are not allowed."
         assert g == 1, "TF v2.2 Conv2D does not support 'groups' argument"
+        #self.conv = layers.Conv2D(filters=c2, kernel_size=k, strides=s, padding="SAME")
         self.conv = keras.layers.Conv2D(
             c2, k, s, 'SAME' if s == 1 else 'VALID', use_bias=False if hasattr(w, 'bn') else True,
             kernel_initializer=keras.initializers.Constant(w.conv.weight.permute(2, 3, 1, 0).numpy()),
@@ -87,9 +88,7 @@ class TFConv(layers.Layer):
             self.act = (lambda x: keras.activations.swish(x)) if act else tf.identity
             self.act_fun = "swish"
         else:
-            self.act = (lambda x: keras.activations.sigmoid(x)) if act else tf.identity
-            self.act_fun = "sigmoid"
-
+            raise Exception(f'no matching TensorFlow activation found for {w.act}')
 
     def call(self, inputs):
         return self.act(self.bn(self.conv(inputs)))
@@ -136,6 +135,38 @@ class TFBottleneck(layers.Layer):
         })
         return config
 
+class TFConv2d(layers.Layer):
+    # Substitution for PyTorch nn.Conv2D
+    def __init__(self, c1, c2, k, s=1, g=1, bias=True, w=None):
+        super().__init__()
+        assert g == 1, "TF v2.2 Conv2D does not support 'groups' argument"
+        self.conv = keras.layers.Conv2D(
+            c2, k, s, 'VALID', use_bias=bias,
+            kernel_initializer=keras.initializers.Constant(w.weight.permute(2, 3, 1, 0).numpy()),
+            bias_initializer=keras.initializers.Constant(w.bias.numpy()) if bias else None, )
+
+    def call(self, inputs):
+        return self.conv(inputs)
+
+class TFBottleneckCSP(layers.Layer):
+    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
+        # ch_in, ch_out, number, shortcut, groups, expansion
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
+        self.cv2 = TFConv2d(c1, c_, 1, 1, bias=False, w=w.cv2)
+        self.cv3 = TFConv2d(c_, c_, 1, 1, bias=False, w=w.cv3)
+        self.cv4 = TFConv(2 * c_, c2, 1, 1, w=w.cv4)
+        self.bn = TFBN(w.bn)
+        self.act = lambda x: keras.activations.relu(x, alpha=0.1)
+        self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
+
+    def call(self, inputs):
+        y1 = self.cv3(self.m(self.cv1(inputs)))
+        y2 = self.cv2(inputs)
+        return self.cv4(self.act(self.bn(tf.concat((y1, y2), axis=3))))
+
 class TFC3(layers.Layer):
     # CSP Bottleneck with 3 convolutions
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, w=None):
@@ -144,8 +175,8 @@ class TFC3(layers.Layer):
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = TFConv(c1, c_, 1, 1, w=w.cv1)
         self.cv2 = TFConv(c1, c_, 1, 1, w=w.cv2)
-        self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
         self.cv3 = TFConv(2 * c_, c2, 1, 1, w=w.cv3)
+        self.m = keras.Sequential([TFBottleneck(c_, c_, shortcut, g, e=1.0, w=w.m[j]) for j in range(n)])
 
     def call(self, inputs):
         return self.cv3(tf.concat((self.m(self.cv1(inputs)), self.cv2(inputs)), axis=3))
@@ -269,48 +300,6 @@ class TFConcat(layers.Layer):
         })
         return config
 
-class TFConcatOut(layers.Layer):
-    def __init__(self, args, dimension=1, w=None):
-        super().__init__()
-
-        self.dimension = dimension
-        self.d = 3
-        self.conv = []
-        for arg in args:
-            w.conv = arg
-            w.act = nn.Sigmoid
-            self.conv.append(TFConv(w.conv.in_channels, w.conv.out_channels, w.conv.kernel_size[0], w.conv.stride[0], act=True, w=w))
-        self.reshape = tf.keras.layers.Reshape((-1, 85))
-        self.concat = tf.keras.layers.Concatenate(axis=dimension)
-
-    def call(self, inputs):
-        y = []
-        for i, x in enumerate(inputs):
-            y.append(self.reshape(self.conv[i](x)))
-        return self.concat(y)
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            "num_inputs": self.d, "dimension": self.dimension,
-        })
-        return config
-
-class ConcatOut(nn.Module):
-    # Concatenate a list of tensors along dimension
-    def __init__(self, args, dimension=0):
-        super().__init__()
-        self.dimension = dimension
-        self.conv = []
-        for w in args:
-            self.conv.append(Conv(w.in_channels, w.out_channels, w.kernel_size[0], w.stride[0], act=nn.Sigmoid()))
-
-    def forward(self, inputs):
-        y = []
-        for i, x in enumerate(inputs):
-            y.append(torch.reshape(self.conv[i](x), (-1, 85)))
-        return torch.cat(y, self.dimension)
-
 def parse_model(d, ch, model, imgsz):  # model_dict, input_channels(3)
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
@@ -341,14 +330,11 @@ def parse_model(d, ch, model, imgsz):  # model_dict, input_channels(3)
         elif m is Concat:
             c2 = sum(ch[-1 if x == -1 else x + 1] for x in f)
         elif m is Detect:
-            # args.append([ch[x + 1] for x in f])
-            # if isinstance(args[1], int):  # number of anchors
-            #     args[1] = [list(range(args[1] * 2))] * len(f)
-            # args.append(imgsz)
-            # repalce Detect block with ConcatOut block
-            m_str = "ConcatOut"
-            m = ConcatOut
-            args = [[a for a in model.model[i].m]]
+            break
+            args.append([ch[x + 1] for x in f])
+            if isinstance(args[1], int):  # number of anchors
+                args[1] = [list(range(args[1] * 2))] * len(f)
+            args.append(imgsz)
         else:
             c2 = ch[f]
 
