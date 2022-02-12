@@ -274,30 +274,6 @@ class Concat(nn.Module):
     def forward(self, x):
         return torch.cat(x, self.d)
 
-anchors = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
-strides = [8,16,32]
-def box_decoding(outputs, anchors, strides, nc=80, imgsz=(640, 640)):
-    import tensorflow as tf
-    no = nc + 5  # number of outputs per anchor
-    nl = len(anchors)  # number of detection layers
-    na = len(anchors[0]) // 2  # number of anchors
-    anchor_grid = tf.reshape(np.array(anchors), [nl, 1, -1, 1, 2])
-    anchor_grid = tf.cast(anchor_grid, tf.float32)
-    z = []
-    for i in range(nl):
-        y = outputs[i]
-        ny, nx = imgsz[0] // strides[i], imgsz[1] // strides[i]
-        xv, yv = tf.meshgrid(tf.range(nx), tf.range(ny))
-        grid = tf.cast(tf.reshape(tf.stack([xv, yv], 2), [1, 1, ny * nx, 2]), dtype=tf.float32)
-        xy = (y[..., 0:2] * 2 - 0.5 + grid) * strides[i]  # xy
-        wh = (y[..., 2:4] * 2) ** 2 * anchor_grid[i]
-        # Normalize xywh to 0-1 to reduce calibration error
-        #xy /= tf.constant([[imgsz[1], imgsz[0]]], dtype=tf.float32)
-        #wh /= tf.constant([[imgsz[1], imgsz[0]]], dtype=tf.float32)
-        y = tf.concat([xy, wh, y[..., 4:]], -1)
-        z.append(tf.reshape(y, [-1, na * ny * nx, no]))
-
-    return torch.tensor(tf.concat(z, 1).numpy())
 
 class DetectMultiBackend(nn.Module):
     # YOLOv5 MultiBackend class for python inference on various backends
@@ -318,10 +294,7 @@ class DetectMultiBackend(nn.Module):
 
         super().__init__()
         w = str(weights[0] if isinstance(weights, list) else weights)
-        suffix = Path(w).suffix.lower()
-        suffixes = ['.pt', '.torchscript', '.onnx', '.engine', '.tflite', '.pb', '', '.mlmodel', '.xml', '.h5']
-        check_suffix(w, suffixes)  # check weights have acceptable suffix
-        pt, jit, onnx, engine, tflite, pb, saved_model, coreml, xml, h5 = (suffix == x for x in suffixes)  # backends
+        pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs = self.model_type(w)  # get backend
         stride, names = 64, [f'class{i}' for i in range(1000)]  # assign defaults
         w = attempt_download(w)  # download if not local
         if data:  # data.yaml path (optional)
@@ -356,6 +329,8 @@ class DetectMultiBackend(nn.Module):
             check_requirements(('openvino-dev',))  # requires openvino-dev: https://pypi.org/project/openvino-dev/
             import openvino.inference_engine as ie
             core = ie.IECore()
+            if not Path(w).is_file():  # if not *.xml
+                w = next(Path(w).glob('*.xml'))  # get *.xml file from *_openvino_model dir
             network = core.read_network(model=w, weights=Path(w).with_suffix('.bin'))  # *.xml, *.bin paths
             executable_network = core.load_network(network, device_name='CPU', num_requests=1)
         elif engine:  # TensorRT
@@ -383,10 +358,6 @@ class DetectMultiBackend(nn.Module):
         else:  # TensorFlow (SavedModel, GraphDef, Lite, Edge TPU)
             if saved_model:  # SavedModel
                 LOGGER.info(f'Loading {w} for TensorFlow SavedModel inference...')
-                import tensorflow as tf
-                model = tf.keras.models.load_model(w)
-            elif h5:
-                LOGGER.info(f'Loading {w} for Keras inference...')
                 import tensorflow as tf
                 model = tf.keras.models.load_model(w)
             elif pb:  # GraphDef https://www.tensorflow.org/guide/migrate#a_graphpb_or_graphpbtxt
@@ -457,16 +428,12 @@ class DetectMultiBackend(nn.Module):
                 y = np.concatenate((box, conf.reshape(-1, 1), cls.reshape(-1, 1)), 1)
             else:
                 y = y[sorted(y)[-1]]  # last output
-        else:  # TensorFlow (SavedModel, GraphDef, Lite, Edge TPU, Keras)
+        else:  # TensorFlow (SavedModel, GraphDef, Lite, Edge TPU)
             im = im.permute(0, 2, 3, 1).cpu().numpy()  # torch BCHW to numpy BHWC shape(1,320,192,3)
             if self.saved_model:  # SavedModel
                 y = self.model(im, training=False).numpy()
             elif self.pb:  # GraphDef
                 y = self.frozen_func(x=self.tf.constant(im)).numpy()
-            elif self.h5:
-                model_out = self.model(im, training=False)
-                y = box_decoding(model_out, anchors, strides)
-                return y
             elif self.tflite:  # Lite
                 input, output = self.input_details[0], self.output_details[0]
                 int8 = input['dtype'] == np.uint8  # is TFLite quantized uint8 model
@@ -490,6 +457,18 @@ class DetectMultiBackend(nn.Module):
             if isinstance(self.device, torch.device) and self.device.type != 'cpu':  # only warmup GPU models
                 im = torch.zeros(*imgsz).to(self.device).type(torch.half if half else torch.float)  # input image
                 self.forward(im)  # warmup
+
+    @staticmethod
+    def model_type(p='path/to/model.pt'):
+        # Return model type from model path, i.e. path='path/to/model.onnx' -> type=onnx
+        from export import export_formats
+        suffixes = list(export_formats().Suffix) + ['.xml']  # export suffixes
+        check_suffix(p, suffixes)  # checks
+        p = Path(p).name  # eliminate trailing separators
+        pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, xml2 = (s in p for s in suffixes)
+        xml |= xml2  # *_openvino_model or *.xml
+        tflite &= not edgetpu  # *.tflite
+        return pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs
 
 
 class AutoShape(nn.Module):
